@@ -272,18 +272,52 @@ build_llvm() {
 
   # Build compiler-rt runtimes needed by Zig tooling and payload packaging.
   if [[ ";${LLVM_ENABLE_RUNTIMES:-compiler-rt};" == *";compiler-rt;"* ]]; then
+    local runtime_targets="${COMPILER_RT_RUNTIME_TARGETS:-x86_64-unknown-linux-gnu;aarch64-unknown-linux-gnu}"
+    local builtin_targets="${COMPILER_RT_BUILTIN_TARGETS:-$runtime_targets}"
+
     llvm_args+=(
       -DCOMPILER_RT_BUILD_BUILTINS="${COMPILER_RT_BUILD_BUILTINS:-ON}"
       -DCOMPILER_RT_BUILD_SANITIZERS="${COMPILER_RT_BUILD_SANITIZERS:-ON}"
       -DCOMPILER_RT_BUILD_LIBFUZZER="${COMPILER_RT_BUILD_LIBFUZZER:-ON}"
       -DCOMPILER_RT_DEFAULT_TARGET_ONLY="${COMPILER_RT_DEFAULT_TARGET_ONLY:-OFF}"
-      -DCOMPILER_RT_BUILD_PROFILE="${COMPILER_RT_BUILD_PROFILE:-OFF}"
+      -DCOMPILER_RT_BUILD_PROFILE="${COMPILER_RT_BUILD_PROFILE:-ON}"
       -DCOMPILER_RT_BUILD_XRAY="${COMPILER_RT_BUILD_XRAY:-OFF}"
       -DCOMPILER_RT_BUILD_MEMPROF="${COMPILER_RT_BUILD_MEMPROF:-OFF}"
       -DCOMPILER_RT_BUILD_ORC="${COMPILER_RT_BUILD_ORC:-OFF}"
       -DCOMPILER_RT_BUILD_GWP_ASAN="${COMPILER_RT_BUILD_GWP_ASAN:-OFF}"
       -DCOMPILER_RT_BUILD_CTX_PROFILE="${COMPILER_RT_BUILD_CTX_PROFILE:-OFF}"
+      -DLLVM_RUNTIME_TARGETS="$runtime_targets"
+      -DLLVM_BUILTIN_TARGETS="$builtin_targets"
     )
+
+    # Build compiler-rt runtimes explicitly for the Linux targets consumed by
+    # downstream Bazel sanitizer/fuzzer configs.
+    local -a runtime_target_array=()
+    local -a builtin_target_array=()
+    IFS=';' read -r -a runtime_target_array <<< "$runtime_targets"
+    IFS=';' read -r -a builtin_target_array <<< "$builtin_targets"
+
+    local target=""
+    for target in "${runtime_target_array[@]}"; do
+      [[ -n "$target" ]] || continue
+      llvm_args+=(
+        "-DRUNTIMES_${target}_LLVM_ENABLE_RUNTIMES=compiler-rt"
+        "-DRUNTIMES_${target}_CMAKE_C_COMPILER_TARGET=$target"
+        "-DRUNTIMES_${target}_CMAKE_CXX_COMPILER_TARGET=$target"
+        "-DRUNTIMES_${target}_CMAKE_ASM_COMPILER_TARGET=$target"
+        "-DRUNTIMES_${target}_COMPILER_RT_BUILD_SANITIZERS=${COMPILER_RT_BUILD_SANITIZERS:-ON}"
+        "-DRUNTIMES_${target}_COMPILER_RT_BUILD_LIBFUZZER=${COMPILER_RT_BUILD_LIBFUZZER:-ON}"
+        "-DRUNTIMES_${target}_COMPILER_RT_BUILD_PROFILE=${COMPILER_RT_BUILD_PROFILE:-ON}"
+      )
+    done
+
+    for target in "${builtin_target_array[@]}"; do
+      [[ -n "$target" ]] || continue
+      llvm_args+=(
+        "-DBUILTINS_${target}_CMAKE_C_COMPILER_TARGET=$target"
+        "-DBUILTINS_${target}_CMAKE_ASM_COMPILER_TARGET=$target"
+      )
+    done
   fi
 
   if [[ -n "${LLVM_TARGETS_TO_BUILD:-}" ]]; then
@@ -342,9 +376,41 @@ install_compiler_rt_runtimes() {
 
   [[ -d "$install_rt_clang_dir" ]] || die "missing compiler-rt install tree at $install_rt_clang_dir"
 
-  local fuzzer_archive=""
-  fuzzer_archive="$(find "$install_rt_clang_dir" -type f -name 'libclang_rt.fuzzer.a' | head -n1 || true)"
-  [[ -n "$fuzzer_archive" ]] || die "compiler-rt install is missing libclang_rt.fuzzer.a under $install_rt_clang_dir"
+  local runtime_targets="${COMPILER_RT_RUNTIME_TARGETS:-x86_64-unknown-linux-gnu;aarch64-unknown-linux-gnu}"
+  local -a runtime_target_array=()
+  IFS=';' read -r -a runtime_target_array <<< "$runtime_targets"
+
+  local -a required_archives=(
+    libclang_rt.fuzzer.a
+    libclang_rt.asan-preinit.a
+    libclang_rt.asan.a
+    libclang_rt.asan_cxx.a
+    libclang_rt.tsan.a
+    libclang_rt.tsan_cxx.a
+    libclang_rt.msan.a
+    libclang_rt.msan_cxx.a
+    libclang_rt.ubsan_standalone.a
+    libclang_rt.ubsan_standalone_cxx.a
+    libclang_rt.lsan.a
+    libclang_rt.rtsan.a
+    libclang_rt.profile.a
+  )
+
+  local -a missing=()
+  local target=""
+  local archive=""
+  for target in "${runtime_target_array[@]}"; do
+    [[ -n "$target" ]] || continue
+    for archive in "${required_archives[@]}"; do
+      if ! find "$install_rt_clang_dir" -type f -path "*/lib/$target/$archive" -print -quit | grep -q .; then
+        missing+=("$target/$archive")
+      fi
+    done
+  done
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    die "compiler-rt install is missing required runtimes under $install_rt_clang_dir: ${missing[*]}"
+  fi
 }
 
 # Merge bootstrap libc++ runtime artifacts into the final LLVM prefix.
