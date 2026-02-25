@@ -1,0 +1,61 @@
+name: Build Ziggurat Release
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 7 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ziggurat-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 720
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            cmake \
+            ninja-build \
+            python3 \
+            xz-utils \
+            binutils \
+            clang \
+            lld \
+            build-essential \
+            pkg-config \
+            zlib1g-dev
+
+      - name: Build / Publish Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/ci-release.sh
+
+      - name: Upload Workflow Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ziggurat-dist
+          path: |
+            dist/ziggurat-*.tar.xz
+            dist/*.sha256
+            dist/*.txt
+          if-no-files-found: ignore
+          retention-days: 14

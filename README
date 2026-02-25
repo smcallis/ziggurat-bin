@@ -1,0 +1,109 @@
+# Ziggurat Builder (GitHub Actions)
+
+This repo builds a hermetic Zig + LLVM payload for Bazel workflows.
+
+It is designed to match the setup under `build/` without modifying `build/`.
+
+## What it does
+
+- Discovers the latest official stable Zig release from `https://ziglang.org/download/index.json`.
+- Downloads that release tarball and reads `zig cc --version` to derive the matching LLVM version.
+- Clones `llvm-project`, `zig`, and `mold` with `--depth=1`.
+- Limits LLVM backend targets to `X86;AArch64` for faster/lighter builds.
+- Bootstraps `libc++/libc++abi/libunwind`, then builds LLVM (clang/lld + selected tools/runtimes) against that libc++.
+- Builds mold first, then links Zig with mold to reduce Zig link time.
+- Builds Zig from Zig's CMake build against that LLVM install.
+- Removes `.deplibs` and `.linker-options` sections from LLVM static archives.
+- Verifies:
+  - Zig/LLVM major.minor match (`zig cc --version` vs `llvm-config --version`).
+  - LLVM static archives contain no `.deplibs` / `.linker-options` sections.
+- Produces one release archive: `dist/ziggurat-<zig-version>.tar.xz` (xz `-9e`).
+
+## Release behavior
+
+`scripts/ci-release.sh`:
+
+1. finds latest official Zig release,
+2. checks GitHub release tag `<zig-version>`,
+3. exits early if `ziggurat-<zig-version>.tar.xz` already exists,
+4. otherwise builds and uploads:
+   - `ziggurat-<zig-version>.tar.xz`
+   - `ziggurat-<zig-version>.tar.xz.sha256`
+
+## Payload contents
+
+From Zig:
+
+- `zig`
+- `lib/**` (Zig stdlib/runtime tree)
+
+From LLVM:
+
+- `bin/ld.lld`
+- `bin/llvm-ar`
+- `bin/llvm-ranlib`
+- `bin/llvm-objcopy`
+- `bin/llvm-objdump`
+- `bin/llvm-symbolizer`
+- `bin/llvm-profdata`
+- `bin/llvm-cov`
+- `bin/llvm-cxxfilt`
+- `bin/llvm-lld` (compat alias; sourced from `lld` when LLVM does not install `llvm-lld`)
+- `bin/llvm-mca`
+- `bin/llvm-nm`
+- `bin/llvm-xray`
+- `bin/clangd`
+- `bin/clang-format`
+- `bin/clang-tidy`
+- `lib/clang/**` (compiler-rt + sanitizer + fuzzer runtimes)
+- `lib/libc++.a`
+- `lib/libc++abi.a`
+- `lib/libunwind.a`
+- `lib/libFuzzer.a` (copied alias from compiler-rt fuzzer runtime)
+
+From mold:
+
+- `bin/mold`
+
+Explicitly excluded:
+
+- `clang`
+- `clang++`
+- wrapper/tool-entrypoint shims (`zig-wrapper`, `tools/<triple>/c++`, etc.)
+
+## Configure versions/target
+
+Edit `toolchain.env`:
+
+- `LLVM_REF` (e.g. `llvmorg-20.1.2`)
+- `ZIG_REF` (official release only, e.g. `0.15.2`)
+- `MOLD_REF` (e.g. `v2.4.0`)
+- `TARGET_TRIPLE`
+- `TARGET_CPU`
+- `LLVM_TARGETS_TO_BUILD` (default `X86;AArch64`)
+- payload lists (`PAYLOAD_LLVM_BINARIES`, `PAYLOAD_LLVM_STATIC_LIBS`, etc.)
+
+For automation, `scripts/ci-release.sh` overrides `LLVM_REF` and `ZIG_REF` from latest Zig metadata.
+
+## Local run
+
+```bash
+chmod +x scripts/*.sh
+./scripts/build-toolchain.sh
+```
+
+Outputs:
+
+- `dist/ziggurat-<zig-version>.tar.xz`
+- `dist/build-info.txt`
+
+## GitHub Actions
+
+Workflow file: `.github/workflows/release.yml`
+
+- runs on schedule and manual dispatch,
+- executes `./scripts/ci-release.sh`,
+- uploads build outputs as workflow artifacts (14-day retention),
+- publishes release assets when missing.
+
+Release assets on GitHub tags are the long-term artifacts and remain available per Zig release.
