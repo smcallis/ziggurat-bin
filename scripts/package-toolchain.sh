@@ -14,11 +14,13 @@ ZIG_VERSION=""
 TOOLCHAIN_NAME=""
 PKG_ROOT=""
 
+# Print CLI usage and exit.
 usage() {
   echo "usage: $0 <llvm-prefix> <zig-prefix> <out-dir> <pkg-key> <llvm-version> <zig-version> [toolchain-name]" >&2
   exit 1
 }
 
+# Parse and validate command-line arguments.
 parse_args() {
   LLVM_PREFIX="${1:-}"
   ZIG_PREFIX="${2:-}"
@@ -31,6 +33,7 @@ parse_args() {
   [[ -n "$LLVM_PREFIX" && -n "$ZIG_PREFIX" && -n "$OUT_DIR" && -n "$PKG_KEY" ]] || usage
 }
 
+# Copy one path if it exists, preserving relative layout.
 copy_if_exists() {
   local src_root="$1"
   local rel="$2"
@@ -42,6 +45,7 @@ copy_if_exists() {
   fi
 }
 
+# Copy all files matching a glob pattern, preserving relative layout.
 copy_glob_matches() {
   local src_root="$1"
   local pattern="$2"
@@ -54,6 +58,7 @@ copy_glob_matches() {
   done < <(compgen -G "$src_root/$pattern" || true)
 }
 
+# Copy a curated subset of LLVM artifacts for the minimal package mode.
 copy_minimal_llvm_payload() {
   local llvm_binaries="${LLVM_BINARIES:-clang clang++ ld.lld llvm-ar llvm-ranlib llvm-objcopy llvm-objdump llvm-symbolizer llvm-profdata llvm-cov}"
   local llvm_dirs="${LLVM_DIRS:-lib/clang}"
@@ -77,6 +82,7 @@ copy_minimal_llvm_payload() {
   done
 }
 
+# Write machine-readable package metadata to manifest.json.
 write_manifest() {
   local manifest="$PKG_ROOT/manifest.json"
 
@@ -93,12 +99,14 @@ JSON
   log "wrote manifest: $manifest"
 }
 
+# Create compressed archive for the packaged toolchain directory.
 create_archive() {
   local archive="$OUT_DIR/${TOOLCHAIN_NAME}-${PKG_KEY}.tar.xz"
   tar -C "$OUT_DIR" -cf - "${TOOLCHAIN_NAME}-${PKG_KEY}" | xz -T0 -9e -c > "$archive"
   log "wrote package: $archive"
 }
 
+# Build package directory, copy payload contents, and emit archive + manifest.
 main() {
   parse_args "$@"
   mkdir -p "$OUT_DIR"

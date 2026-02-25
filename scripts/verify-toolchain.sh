@@ -10,22 +10,26 @@ ZIG_PREFIX=""
 AR_BIN=""
 OBJDUMP_BIN=""
 
+# Print CLI usage and exit.
 usage() {
   echo "usage: $0 <llvm-prefix> <zig-prefix>" >&2
   exit 1
 }
 
+# Parse and validate command-line arguments.
 parse_args() {
   LLVM_PREFIX="${1:-}"
   ZIG_PREFIX="${2:-}"
   [[ -n "$LLVM_PREFIX" && -n "$ZIG_PREFIX" ]] || usage
 }
 
+# Check that key executables exist before verification.
 assert_inputs() {
   [[ -x "$LLVM_PREFIX/bin/llvm-config" ]] || die "expected llvm-config at $LLVM_PREFIX/bin/llvm-config"
   [[ -x "$ZIG_PREFIX/bin/zig" ]] || die "expected zig binary at $ZIG_PREFIX/bin/zig"
 }
 
+# Resolve objdump/ar tools used to inspect archive members.
 resolve_archive_tools() {
   OBJDUMP_BIN="${OBJDUMP_BIN:-$LLVM_PREFIX/bin/llvm-objdump}"
   AR_BIN="${AR_BIN:-$LLVM_PREFIX/bin/llvm-ar}"
@@ -41,6 +45,7 @@ resolve_archive_tools() {
   [[ -n "$AR_BIN" && -x "$AR_BIN" ]] || die "requires llvm-ar/ar"
 }
 
+# Verify Zig's embedded clang version matches llvm-config major.minor.
 verify_llvm_zig_version_match() {
   local llvm_version=""
   local zig_version=""
@@ -61,6 +66,7 @@ verify_llvm_zig_version_match() {
   log "verified matching LLVM major.minor: $(major_minor "$llvm_version") (zig=$zig_version)"
 }
 
+# Return success when an archive contains forbidden metadata sections.
 archive_has_forbidden_sections() {
   local archive="$1"
 
@@ -90,6 +96,7 @@ archive_has_forbidden_sections() {
   return 1
 }
 
+# Scan all static archives under LLVM prefix for forbidden sections.
 verify_archive_sections() {
   local -a archives=()
   mapfile -t archives < <(find "$LLVM_PREFIX/lib" -type f -name '*.a' | sort)
@@ -105,6 +112,7 @@ verify_archive_sections() {
   return 0
 }
 
+# Run toolchain consistency checks used before packaging/release.
 main() {
   parse_args "$@"
   assert_inputs

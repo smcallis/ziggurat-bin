@@ -14,6 +14,7 @@ PAYLOAD_NAME=""
 PACKAGE_BASENAME=""
 PKG_ROOT=""
 
+# Print CLI usage and exit.
 usage() {
   cat >&2 <<USAGE
 usage: $0 <zig-prefix> <llvm-prefix> <mold-prefix|-> <out-dir> <pkg-key> [payload-name] [package-basename]
@@ -21,6 +22,7 @@ USAGE
   exit 1
 }
 
+# Parse and validate command-line arguments.
 parse_args() {
   ZIG_PREFIX="${1:-}"
   LLVM_PREFIX="${2:-}"
@@ -33,10 +35,12 @@ parse_args() {
   [[ -n "$ZIG_PREFIX" && -n "$LLVM_PREFIX" && -n "$MOLD_PREFIX" && -n "$OUT_DIR" && -n "$PKG_KEY" ]] || usage
 }
 
+# Ensure tooling required to package/compress artifacts is available.
 require_packaging_dependencies() {
   require_cmds tar xz find
 }
 
+# Verify expected build outputs exist before packaging starts.
 assert_inputs() {
   [[ -x "$ZIG_PREFIX/bin/zig" ]] || die "missing zig binary at $ZIG_PREFIX/bin/zig"
   [[ -d "$ZIG_PREFIX/lib" ]] || die "missing zig lib directory at $ZIG_PREFIX/lib"
@@ -44,6 +48,7 @@ assert_inputs() {
   [[ -d "$LLVM_PREFIX/lib" ]] || die "missing llvm lib directory at $LLVM_PREFIX/lib"
 }
 
+# Resolve the output directory name used inside dist/.
 package_base_name() {
   if [[ -n "$PACKAGE_BASENAME" ]]; then
     printf '%s\n' "$PACKAGE_BASENAME"
@@ -52,6 +57,7 @@ package_base_name() {
   printf '%s\n' "${PAYLOAD_NAME}-${PKG_KEY}"
 }
 
+# Copy one required file into the package root.
 copy_required_file() {
   local src="$1"
   local dst="$2"
@@ -60,6 +66,7 @@ copy_required_file() {
   cp -a "$src" "$dst"
 }
 
+# Copy one required binary and dereference symlinks to real files.
 copy_required_binary() {
   local requested_name="$1"
   local dest_name="${2:-$requested_name}"
@@ -84,6 +91,7 @@ copy_required_binary() {
   die "missing required file: $primary_path"
 }
 
+# Copy one required directory recursively.
 copy_required_dir() {
   local src="$1"
   local dst="$2"
@@ -92,6 +100,7 @@ copy_required_dir() {
   cp -a "$src/." "$dst/"
 }
 
+# Copy Zig binary plus Zig standard library/runtime files.
 copy_zig_payload() {
   copy_required_file "$ZIG_PREFIX/bin/zig" "$PKG_ROOT/zig"
 
@@ -102,6 +111,7 @@ copy_zig_payload() {
   fi
 }
 
+# Copy required LLVM/Clang executables listed by PAYLOAD_LLVM_BINARIES.
 copy_llvm_binaries() {
   local llvm_bins="${PAYLOAD_LLVM_BINARIES:-ld.lld llvm-ar llvm-ranlib llvm-objcopy llvm-objdump llvm-symbolizer llvm-profdata llvm-cov llvm-cxxfilt llvm-lld llvm-mca llvm-nm llvm-xray clangd clang-format clang-tidy}"
 
@@ -111,6 +121,7 @@ copy_llvm_binaries() {
   done
 }
 
+# Copy required LLVM runtime directories (usually lib/clang tree).
 copy_llvm_directories() {
   local llvm_dirs="${PAYLOAD_LLVM_DIRS:-lib/clang}"
 
@@ -120,6 +131,7 @@ copy_llvm_directories() {
   done
 }
 
+# Copy selected static C++ runtime libraries used by downstream builds.
 copy_static_runtime_libraries() {
   local static_libs="${PAYLOAD_LLVM_STATIC_LIBS:-lib/libc++.a lib/libc++abi.a lib/libunwind.a}"
 
@@ -129,6 +141,7 @@ copy_static_runtime_libraries() {
   done
 }
 
+# Copy libclang_rt.fuzzer.a as a canonical lib/libFuzzer.a alias.
 copy_libfuzzer_alias() {
   local preferred=""
   local fallback=""
@@ -142,6 +155,7 @@ copy_libfuzzer_alias() {
   copy_required_file "$selected" "$PKG_ROOT/lib/libFuzzer.a"
 }
 
+# Copy mold into payload when enabled/required.
 copy_mold_binary() {
   local require_mold="${PAYLOAD_REQUIRE_MOLD:-1}"
 
@@ -156,6 +170,7 @@ copy_mold_binary() {
   copy_required_file "$MOLD_PREFIX/bin/mold" "$PKG_ROOT/bin/mold"
 }
 
+# Validate that the assembled payload has required binaries and libraries.
 verify_payload() {
   [[ -x "$PKG_ROOT/zig" ]] || die "payload verification failed: missing executable zig"
   [[ -d "$PKG_ROOT/lib" ]] || die "payload verification failed: missing lib directory"
@@ -172,6 +187,7 @@ verify_payload() {
   [[ -f "$PKG_ROOT/lib/libFuzzer.a" ]] || die "payload verification failed: missing lib/libFuzzer.a"
 }
 
+# Create compressed release archive for the payload directory.
 create_archive() {
   local archive_basename="$1"
   local archive="$OUT_DIR/$archive_basename.tar.xz"
@@ -180,11 +196,13 @@ create_archive() {
   log "wrote ziggurat payload: $archive"
 }
 
+# Build payload directory, verify it, and emit the final .tar.xz archive.
 main() {
   parse_args "$@"
   require_packaging_dependencies
   assert_inputs
 
+  # Prepare a clean payload directory.
   mkdir -p "$OUT_DIR"
 
   local pkg_base=""
@@ -194,6 +212,7 @@ main() {
   rm -rf "$PKG_ROOT"
   mkdir -p "$PKG_ROOT"
 
+  # Populate payload from Zig, LLVM, and optional mold outputs.
   copy_zig_payload
   copy_llvm_binaries
   copy_llvm_directories
@@ -201,6 +220,7 @@ main() {
   copy_libfuzzer_alias
   copy_mold_binary
 
+  # Validate payload layout before archiving.
   verify_payload
   create_archive "$pkg_base"
 }

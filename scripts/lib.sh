@@ -5,20 +5,24 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIR
 readonly UTC_TS_FORMAT='+%Y-%m-%dT%H:%M:%SZ'
 
+# Print a timestamped log line in UTC.
 log() {
   printf '[%s] %s\n' "$(date -u "$UTC_TS_FORMAT")" "$*"
 }
 
+# Print an error and exit non-zero.
 die() {
   printf 'error: %s\n' "$*" >&2
   exit 1
 }
 
+# Ensure a single command is available on PATH.
 require_cmd() {
   local cmd="$1"
   command -v "$cmd" >/dev/null 2>&1 || die "missing required command: $cmd"
 }
 
+# Ensure all listed commands are available on PATH.
 require_cmds() {
   local cmd
   for cmd in "$@"; do
@@ -26,6 +30,7 @@ require_cmds() {
   done
 }
 
+# Extract "major.minor" from a semantic version string.
 major_minor() {
   local version="$1"
   local major=""
@@ -35,11 +40,13 @@ major_minor() {
   printf '%s.%s\n' "$major" "$minor"
 }
 
+# Return success when a ref matches an official Zig release tag (X.Y.Z).
 is_release_ref() {
   local ref="$1"
   [[ "$ref" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 }
 
+# Enforce release-only Zig refs unless ALLOW_DEV_REFS=1 is set.
 validate_release_ref() {
   local ref="$1"
   local allow_dev_refs="${ALLOW_DEV_REFS:-0}"
@@ -51,6 +58,7 @@ validate_release_ref() {
   is_release_ref "$ref" || die "ZIG_REF must be an official release tag like 0.15.2 (got: $ref)"
 }
 
+# Load toolchain configuration and validate required keys.
 load_config() {
   local cfg="${1:-$ROOT_DIR/toolchain.env}"
   [[ -f "$cfg" ]] || die "missing config file: $cfg"
@@ -67,6 +75,7 @@ load_config() {
   : "${TOOLCHAIN_NAME:?must be set in toolchain.env}"
 }
 
+# Override a shell variable when an override value is provided.
 apply_optional_override() {
   local var_name="$1"
   local override_value="$2"
@@ -75,6 +84,7 @@ apply_optional_override() {
   fi
 }
 
+# Clone or refresh a repository at a specific ref with depth=1.
 sync_repo_shallow() {
   local repo="$1"
   local ref="$2"
@@ -111,6 +121,7 @@ sync_repo_shallow() {
   die "unable to refresh $dir to $ref: network fetch failed and ref is unavailable locally"
 }
 
+# Run a CMake build with optional BUILD_PARALLELISM override.
 cmake_build() {
   local build_dir="$1"
   shift
@@ -123,6 +134,7 @@ cmake_build() {
   "${cmd[@]}"
 }
 
+# Normalize uname OS values to packaging OS names.
 normalize_host_os() {
   local uname_s
   uname_s="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -133,6 +145,7 @@ normalize_host_os() {
   esac
 }
 
+# Normalize uname arch values to packaging architecture names.
 normalize_host_arch() {
   local uname_m
   uname_m="$(uname -m)"
@@ -143,6 +156,7 @@ normalize_host_arch() {
   esac
 }
 
+# Build the host package key used in release metadata.
 host_package_key() {
   local arch
   local os

@@ -9,10 +9,12 @@ DOWNLOAD_INDEX_URL="${DOWNLOAD_INDEX_URL:-https://ziglang.org/download/index.jso
 GITHUB_API_URL="${GITHUB_API_URL:-https://api.github.com}"
 TMPDIR_CLEANUP=""
 
+# Ensure all tools required by release automation are installed.
 require_release_dependencies() {
   require_cmds curl python3 tar sha256sum
 }
 
+# Remove the temporary working directory created by this script.
 cleanup_tmpdir() {
   local dir="${TMPDIR_CLEANUP:-}"
   if [[ -n "$dir" && -d "$dir" ]]; then
@@ -20,6 +22,7 @@ cleanup_tmpdir() {
   fi
 }
 
+# Resolve the latest stable Zig release from the public download index.
 latest_stable_zig() {
   python3 - "$DOWNLOAD_INDEX_URL" <<'PY'
 import json
@@ -40,6 +43,7 @@ print(versions[-1])
 PY
 }
 
+# Resolve tarball URL and checksum for a Zig release/host pair.
 resolve_zig_tarball_info() {
   local zig_version="$1"
   local host_key="$2"
@@ -71,6 +75,7 @@ print(shasum)
 PY
 }
 
+# Download Zig release tarball and verify SHA-256.
 download_and_verify_zig_archive() {
   local tarball_url="$1"
   local expected_sha="$2"
@@ -83,6 +88,7 @@ download_and_verify_zig_archive() {
   [[ "$actual_sha" == "$expected_sha" ]] || die "zig release checksum mismatch: expected $expected_sha got $actual_sha"
 }
 
+# Inspect the Zig release binary to determine its LLVM tag.
 extract_llvm_ref_from_zig_release() {
   local zig_archive="$1"
   local tmpdir="$2"
@@ -107,10 +113,12 @@ extract_llvm_ref_from_zig_release() {
   printf 'llvmorg-%s\n' "$clang_version"
 }
 
+# Detect whether release upload prerequisites are present.
 in_github_ci_context() {
   [[ -n "${GITHUB_TOKEN:-}" && -n "${GITHUB_REPOSITORY:-}" ]]
 }
 
+# Issue an authenticated GitHub API request and return HTTP status code.
 github_request() {
   local method="$1"
   local url="$2"
@@ -134,6 +142,7 @@ github_request() {
   "${cmd[@]}"
 }
 
+# Return 1/0 depending on whether a release JSON payload has a named asset.
 release_has_asset_from_json() {
   local release_json="$1"
   local asset_name="$2"
@@ -155,6 +164,7 @@ print("0")
 PY
 }
 
+# Extract upload URL prefix from a GitHub release payload.
 release_json_upload_url() {
   local release_json="$1"
 
@@ -173,6 +183,7 @@ print(upload_url.split("{", 1)[0])
 PY
 }
 
+# URL-encode a string for safe use in API paths/queries.
 encode_url_component() {
   local raw="$1"
   python3 - "$raw" <<'PY'
@@ -182,6 +193,7 @@ print(urllib.parse.quote(sys.argv[1], safe=""))
 PY
 }
 
+# Fetch release metadata by tag and write response JSON to a file.
 fetch_release_by_tag() {
   local tag="$1"
   local output_json="$2"
@@ -194,6 +206,7 @@ fetch_release_by_tag() {
     "$output_json"
 }
 
+# Ensure a GitHub release exists for the given tag (create if missing).
 ensure_release_exists() {
   local tag="$1"
   local release_name="$2"
@@ -256,6 +269,7 @@ JSON
   [[ "$status" == "200" ]] || die "created release tag $tag but failed to fetch it (HTTP $status)"
 }
 
+# Upload one asset if it is not already attached to the release.
 upload_release_asset_if_missing() {
   local release_json="$1"
   local asset_path="$2"
@@ -296,6 +310,7 @@ upload_release_asset_if_missing() {
   log "uploaded release asset: $asset_name"
 }
 
+# Skip an expensive build when the release already has the archive asset.
 maybe_skip_if_release_asset_exists() {
   local tag="$1"
   local archive_name="$2"
@@ -331,7 +346,9 @@ maybe_skip_if_release_asset_exists() {
   esac
 }
 
+# Resolve latest Zig/LLVM pair, build payload, and optionally upload release assets.
 main() {
+  # Resolve release versions and short-circuit if the release already has the artifact.
   require_release_dependencies
 
   local latest_zig=""
@@ -344,6 +361,7 @@ main() {
     exit 0
   fi
 
+  # Download official Zig release archive and infer matching LLVM tag.
   local host_key=""
   host_key="$(host_package_key)"
 
@@ -366,6 +384,7 @@ main() {
   log "latest zig release: $latest_zig"
   log "resolved llvm ref: $llvm_ref"
 
+  # Build and package ziggurat payload for this Zig release.
   ZIG_REF_OVERRIDE="$latest_zig" \
   LLVM_REF_OVERRIDE="$llvm_ref" \
   EMIT_TOOLCHAIN_ARCHIVE=0 \
@@ -379,6 +398,7 @@ main() {
   sha256sum "$archive_path" > "$sha_path"
   log "wrote checksum: $sha_path"
 
+  # Upload archive and checksum when running in GitHub CI with credentials.
   if ! in_github_ci_context; then
     log "not in github ci context; skipping release upload"
     exit 0

@@ -10,16 +10,19 @@ AR_BIN=""
 OBJCOPY_BIN=""
 RANLIB_BIN=""
 
+# Print CLI usage and exit.
 usage() {
   echo "usage: $0 <llvm-prefix>" >&2
   exit 1
 }
 
+# Parse and validate command-line arguments.
 parse_args() {
   PREFIX="${1:-}"
   [[ -n "$PREFIX" && -d "$PREFIX" ]] || usage
 }
 
+# Resolve archive tooling, preferring tools from the provided prefix.
 resolve_tools() {
   AR_BIN="${AR_BIN:-$PREFIX/bin/llvm-ar}"
   OBJCOPY_BIN="${OBJCOPY_BIN:-$PREFIX/bin/llvm-objcopy}"
@@ -40,6 +43,7 @@ resolve_tools() {
   [[ -n "$RANLIB_BIN" && -x "$RANLIB_BIN" ]] || die "requires llvm-ranlib/ranlib"
 }
 
+# Rebuild a static archive with .deplibs/.linker-options removed from members.
 sanitize_archive() {
   local archive="$1"
 
@@ -82,6 +86,7 @@ sanitize_archive() {
   rm -rf "$tmpdir"
 }
 
+# Strip unsupported metadata sections from all static archives under prefix/lib.
 main() {
   parse_args "$@"
   resolve_tools

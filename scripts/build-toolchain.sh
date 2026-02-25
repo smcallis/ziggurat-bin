@@ -17,6 +17,9 @@ LLVM_RT_BUILD_DIR=""
 LLVM_RT_PREFIX=""
 LLVM_BUILD_DIR=""
 LLVM_PREFIX=""
+ZLIB_SRC_DIR=""
+ZLIB_BUILD_DIR=""
+ZLIB_PREFIX=""
 
 ZIG_SRC_DIR=""
 ZIG_BUILD_DIR=""
@@ -35,12 +38,22 @@ BOOTSTRAP_CXX=""
 LLVM_VERSION=""
 ZIG_VERSION=""
 
+# Config-sourced variables (declared for lint clarity; populated by load_config).
+LLVM_REPO=""
+LLVM_REF=""
+ZIG_REPO=""
+ZIG_REF=""
+ZLIB_REPO=""
+ZLIB_REF=""
+
+# Convert tool names to CMake option key format (e.g. llvm-ar -> LLVM_AR).
 canonical_tool_name() {
   local name="$1"
   name="${name//-/_}"
   printf '%s' "${name^^}"
 }
 
+# Enable only selected tool subdirectories and disable all others in a source root.
 add_tool_build_flags() {
   local -n cmake_args_ref="$1"
   local option_prefix="$2"
@@ -73,6 +86,7 @@ add_tool_build_flags() {
   shopt -u nullglob
 }
 
+# Resolve workspace, install, and output paths used across the build.
 configure_runtime_paths() {
   WORK_DIR="${WORK_DIR:-$ROOT_DIR/.work}"
   DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
@@ -89,6 +103,9 @@ configure_runtime_paths() {
   LLVM_RT_PREFIX="$WORK_DIR/install-llvm-runtimes"
   LLVM_BUILD_DIR="$WORK_DIR/build-llvm"
   LLVM_PREFIX="$WORK_DIR/install-llvm"
+  ZLIB_SRC_DIR="$WORK_DIR/zlib"
+  ZLIB_BUILD_DIR="$WORK_DIR/build-zlib"
+  ZLIB_PREFIX="$WORK_DIR/install-zlib"
 
   ZIG_SRC_DIR="$WORK_DIR/zig"
   ZIG_BUILD_DIR="$WORK_DIR/build-zig"
@@ -101,6 +118,7 @@ configure_runtime_paths() {
   mkdir -p "$WORK_DIR" "$DIST_DIR" "$ZIG_GLOBAL_CACHE_DIR" "$XDG_CACHE_HOME"
 }
 
+# Load config, apply optional overrides, and enforce release-only Zig refs.
 load_and_validate_config() {
   load_config "${TOOLCHAIN_CONFIG:-$ROOT_DIR/toolchain.env}"
   apply_optional_override LLVM_REF "${LLVM_REF_OVERRIDE:-}"
@@ -108,13 +126,18 @@ load_and_validate_config() {
   validate_release_ref "$ZIG_REF"
 }
 
+# Check required host build tools before running any work.
 require_build_dependencies() {
   require_cmds git cmake ninja python3 tar xz clang clang++ find
 }
 
+# Fetch or refresh all source repositories at their configured refs.
 sync_sources() {
   sync_repo_shallow "$LLVM_REPO" "$LLVM_REF" "$LLVM_SRC_DIR"
   sync_repo_shallow "$ZIG_REPO" "$ZIG_REF" "$ZIG_SRC_DIR"
+  : "${ZLIB_REPO:=https://github.com/madler/zlib.git}"
+  : "${ZLIB_REF:=v1.3.1}"
+  sync_repo_shallow "$ZLIB_REPO" "$ZLIB_REF" "$ZLIB_SRC_DIR"
 
   if [[ "${BUILD_MOLD:-1}" == "1" ]]; then
     : "${MOLD_REPO:=https://github.com/rui314/mold.git}"
@@ -125,12 +148,15 @@ sync_sources() {
   fi
 }
 
+# Remove prior build and install directories for a clean run.
 clean_previous_outputs() {
   rm -rf \
     "$LLVM_RT_BUILD_DIR" \
     "$LLVM_RT_PREFIX" \
     "$LLVM_BUILD_DIR" \
     "$LLVM_PREFIX" \
+    "$ZLIB_BUILD_DIR" \
+    "$ZLIB_PREFIX" \
     "$ZIG_BUILD_DIR" \
     "$ZIG_PREFIX" \
     "$MOLD_BUILD_DIR"
@@ -140,6 +166,7 @@ clean_previous_outputs() {
   fi
 }
 
+# Select host bootstrap C/C++ compilers used for LLVM and mold.
 configure_bootstrap_compilers() {
   BOOTSTRAP_CC="${BOOTSTRAP_CC:-$(command -v clang)}"
   BOOTSTRAP_CXX="${BOOTSTRAP_CXX:-$(command -v clang++)}"
@@ -148,6 +175,7 @@ configure_bootstrap_compilers() {
   log "using bootstrap compilers: CC=$BOOTSTRAP_CC CXX=$BOOTSTRAP_CXX"
 }
 
+# Build libc++, libc++abi, and libunwind first for a hermetic LLVM toolchain.
 build_bootstrap_runtimes() {
   log "bootstrapping libc++ runtimes for llvm build"
 
@@ -173,11 +201,33 @@ build_bootstrap_runtimes() {
   [[ -d "$LLVM_RT_PREFIX/include/c++/v1" ]] || die "missing libc++ headers at $LLVM_RT_PREFIX/include/c++/v1"
 }
 
+# Build static zlib and install it for LLVM and Zig link steps.
+build_bootstrap_zlib() {
+  log "bootstrapping zlib (${ZLIB_REF})"
+
+  local -a zlib_args=(
+    -G "${CMAKE_GENERATOR:-Ninja}"
+    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_C_COMPILER="$BOOTSTRAP_CC"
+    -DCMAKE_CXX_COMPILER="$BOOTSTRAP_CXX"
+    -DCMAKE_INSTALL_PREFIX="$ZLIB_PREFIX"
+    -DBUILD_SHARED_LIBS=OFF
+    -DBUILD_TESTING=OFF
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+  )
+
+  cmake -S "$ZLIB_SRC_DIR" -B "$ZLIB_BUILD_DIR" "${zlib_args[@]}"
+  cmake_build "$ZLIB_BUILD_DIR" --target install
+
+  [[ -f "$ZLIB_PREFIX/lib/libz.a" ]] || die "missing static zlib archive at $ZLIB_PREFIX/lib/libz.a"
+}
+
+# Configure and install LLVM/Clang/LLD with minimal required tools enabled.
 build_llvm() {
   log "configuring llvm ($LLVM_REF)"
 
   local llvm_libcxx_cxx_flags="-stdlib=libc++ -isystem $LLVM_RT_PREFIX/include/c++/v1"
-  local llvm_libcxx_link_flags="-stdlib=libc++ -L$LLVM_RT_PREFIX/lib"
+  local llvm_libcxx_link_flags="-stdlib=libc++ -L$LLVM_RT_PREFIX/lib -L$ZLIB_PREFIX/lib"
 
   local -a llvm_args=(
     -G "${CMAKE_GENERATOR:-Ninja}"
@@ -185,7 +235,7 @@ build_llvm() {
     -DCMAKE_C_COMPILER="$BOOTSTRAP_CC"
     -DCMAKE_CXX_COMPILER="$BOOTSTRAP_CXX"
     -DCMAKE_INSTALL_PREFIX="$LLVM_PREFIX"
-    -DCMAKE_PREFIX_PATH="$LLVM_RT_PREFIX"
+    -DCMAKE_PREFIX_PATH="$LLVM_RT_PREFIX;$ZLIB_PREFIX"
     -DCMAKE_CXX_FLAGS="$llvm_libcxx_cxx_flags"
     -DCMAKE_EXE_LINKER_FLAGS="$llvm_libcxx_link_flags"
     -DCMAKE_SHARED_LINKER_FLAGS="$llvm_libcxx_link_flags"
@@ -197,6 +247,7 @@ build_llvm() {
     -DLLVM_ENABLE_LIBCXX=ON
     -DLLVM_ENABLE_RUNTIMES="${LLVM_ENABLE_RUNTIMES:-compiler-rt}"
     -DLLVM_ENABLE_BINDINGS=OFF
+    -DLLVM_ENABLE_ZLIB=FORCE_ON
     -DLLVM_ENABLE_LIBEDIT=OFF
     -DLLVM_ENABLE_LIBXML2=OFF
     -DLLVM_ENABLE_Z3_SOLVER=OFF
@@ -213,8 +264,13 @@ build_llvm() {
     -DCLANG_INCLUDE_DOCS=OFF
     -DCLANG_INCLUDE_TESTS=OFF
     -DLLD_BUILD_TOOLS=ON
+    -DZLIB_USE_STATIC_LIBS=ON
+    -DZLIB_ROOT="$ZLIB_PREFIX"
+    -DZLIB_INCLUDE_DIR="$ZLIB_PREFIX/include"
+    -DZLIB_LIBRARY="$ZLIB_PREFIX/lib/libz.a"
   )
 
+  # Build compiler-rt runtimes needed by Zig tooling and payload packaging.
   if [[ ";${LLVM_ENABLE_RUNTIMES:-compiler-rt};" == *";compiler-rt;"* ]]; then
     llvm_args+=(
       -DCOMPILER_RT_BUILD_BUILTINS="${COMPILER_RT_BUILD_BUILTINS:-ON}"
@@ -234,6 +290,7 @@ build_llvm() {
     llvm_args+=("-DLLVM_TARGETS_TO_BUILD=${LLVM_TARGETS_TO_BUILD}")
   fi
 
+  # Restrict LLVM tools to a curated set required by downstream Bazel usage.
   local llvm_required_tools="${LLVM_REQUIRED_TOOLS:-llvm-ar llvm-config llvm-cov llvm-cxxfilt llvm-mca llvm-nm llvm-objcopy llvm-objdump llvm-profdata llvm-ranlib llvm-symbolizer llvm-xray}"
   local -a llvm_required_tools_array=()
   # shellcheck disable=SC2206
@@ -264,6 +321,7 @@ build_llvm() {
   ensure_llvm_config_aliases
 }
 
+# Install compiler-rt runtimes and merge them into the LLVM install prefix.
 install_compiler_rt_runtimes() {
   if [[ ";${LLVM_ENABLE_RUNTIMES:-compiler-rt};" != *";compiler-rt;"* ]]; then
     return
@@ -272,14 +330,24 @@ install_compiler_rt_runtimes() {
   log "installing compiler-rt runtime artifacts"
   cmake_build "$LLVM_BUILD_DIR" --target install-runtimes
 
-  local rt_prefix="$LLVM_BUILD_DIR/runtimes/runtimes-bins"
-  local rt_clang_dir="$rt_prefix/lib/clang"
-  [[ -d "$rt_clang_dir" ]] || die "missing compiler-rt runtime tree: $rt_clang_dir"
+  local build_rt_clang_dir="$LLVM_BUILD_DIR/runtimes/runtimes-bins/lib/clang"
+  local install_rt_clang_dir="$LLVM_PREFIX/lib/clang"
 
-  mkdir -p "$LLVM_PREFIX/lib/clang"
-  cp -a "$rt_clang_dir/." "$LLVM_PREFIX/lib/clang/"
+  # Some configurations install runtimes directly into LLVM_PREFIX and do not
+  # leave a populated runtimes-bins/lib/clang tree.
+  if [[ -d "$build_rt_clang_dir" ]]; then
+    mkdir -p "$install_rt_clang_dir"
+    cp -a "$build_rt_clang_dir/." "$install_rt_clang_dir/"
+  fi
+
+  [[ -d "$install_rt_clang_dir" ]] || die "missing compiler-rt install tree at $install_rt_clang_dir"
+
+  local fuzzer_archive=""
+  fuzzer_archive="$(find "$install_rt_clang_dir" -type f -name 'libclang_rt.fuzzer.a' | head -n1 || true)"
+  [[ -n "$fuzzer_archive" ]] || die "compiler-rt install is missing libclang_rt.fuzzer.a under $install_rt_clang_dir"
 }
 
+# Merge bootstrap libc++ runtime artifacts into the final LLVM prefix.
 merge_bootstrap_runtimes_into_llvm_prefix() {
   log "merging bootstrap libc++ runtimes into llvm prefix"
 
@@ -297,6 +365,17 @@ merge_bootstrap_runtimes_into_llvm_prefix() {
   shopt -u nullglob
 }
 
+# Merge static zlib into LLVM prefix so downstream -L<llvm>/lib -lz resolves to libz.a.
+merge_bootstrap_zlib_into_llvm_prefix() {
+  log "merging static zlib into llvm prefix"
+
+  mkdir -p "$LLVM_PREFIX/include" "$LLVM_PREFIX/lib"
+  cp -a "$ZLIB_PREFIX/lib/libz.a" "$LLVM_PREFIX/lib/libz.a"
+  cp -a "$ZLIB_PREFIX/include/zlib.h" "$LLVM_PREFIX/include/zlib.h"
+  cp -a "$ZLIB_PREFIX/include/zconf.h" "$LLVM_PREFIX/include/zconf.h"
+}
+
+# Rebuild one static archive after removing unsupported metadata sections.
 sanitize_single_archive() {
   local archive="$1"
   local ar_bin="$2"
@@ -342,6 +421,7 @@ sanitize_single_archive() {
   rm -rf "$tmpdir"
 }
 
+# Strip .deplibs/.linker-options from all LLVM static archives.
 sanitize_llvm_archives() {
   log "stripping .deplibs/.linker-options from llvm static archives"
 
@@ -363,6 +443,7 @@ sanitize_llvm_archives() {
   done
 }
 
+# Export runtime env so LLVM and Zig binaries use hermetic libraries.
 configure_llvm_runtime_env() {
   local llvm_lib_path
   llvm_lib_path="$(llvm_runtime_lib_path)"
@@ -374,6 +455,7 @@ configure_llvm_runtime_env() {
   export XDG_CACHE_HOME
 }
 
+# Build library search path for LLVM executables that depend on libc++ runtimes.
 llvm_runtime_lib_path() {
   local path="$LLVM_PREFIX/lib"
   if [[ -d "$LLVM_RT_PREFIX/lib" ]]; then
@@ -382,6 +464,7 @@ llvm_runtime_lib_path() {
   printf '%s' "$path"
 }
 
+# Create versioned llvm-config aliases expected by Zig's Findllvm.cmake.
 ensure_llvm_config_aliases() {
   local llvm_config="$LLVM_PREFIX/bin/llvm-config"
   [[ -x "$llvm_config" ]] || die "missing llvm-config: $llvm_config"
@@ -400,6 +483,7 @@ ensure_llvm_config_aliases() {
   ln -sf llvm-config "$LLVM_PREFIX/bin/llvm-config${major}"
 }
 
+# Configure and install Zig against the freshly built hermetic LLVM prefix.
 build_zig() {
   log "configuring zig ($ZIG_REF)"
 
@@ -436,6 +520,7 @@ build_zig() {
   cmake_build "$ZIG_BUILD_DIR" --target install
 }
 
+# Build mold and install it into the toolchain payload prefix.
 build_mold() {
   if [[ "${BUILD_MOLD:-1}" != "1" ]]; then
     log "skipping mold build (BUILD_MOLD=${BUILD_MOLD:-0})"
@@ -468,6 +553,7 @@ build_mold() {
   cp -a "$mold_bin_candidate" "$MOLD_PREFIX/bin/mold"
 }
 
+# Produce output archives and payloads in dist/.
 package_outputs() {
   if [[ "$EMIT_TOOLCHAIN_ARCHIVE" == "1" ]]; then
     "$SCRIPT_DIR/package-toolchain.sh" \
@@ -494,6 +580,7 @@ package_outputs() {
     "$RELEASE_ARCHIVE_NAME"
 }
 
+# Emit a small metadata file describing the generated artifacts.
 write_build_info() {
   cat > "$DIST_DIR/build-info.txt" <<EOF_INFO
 toolchain_name=$TOOLCHAIN_NAME
@@ -509,24 +596,31 @@ built_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF_INFO
 }
 
+# Run the full build, verification, and packaging pipeline.
 main() {
+  # Prepare workspace and inputs.
   require_build_dependencies
   load_and_validate_config
   configure_runtime_paths
 
+  # Sync repositories and clean previous outputs.
   sync_sources
   clean_previous_outputs
 
+  # Build mold, runtimes, LLVM, and Zig.
   configure_bootstrap_compilers
   build_mold
   build_bootstrap_runtimes
+  build_bootstrap_zlib
   build_llvm
   merge_bootstrap_runtimes_into_llvm_prefix
+  merge_bootstrap_zlib_into_llvm_prefix
   sanitize_llvm_archives
 
   configure_llvm_runtime_env
   build_zig
 
+  # Verify outputs and produce release artifacts.
   LLVM_VERSION="$(LD_LIBRARY_PATH="$(llvm_runtime_lib_path)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$LLVM_PREFIX/bin/llvm-config" --version)"
   ZIG_VERSION="$("$ZIG_PREFIX/bin/zig" version)"
 
