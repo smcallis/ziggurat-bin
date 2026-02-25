@@ -81,7 +81,18 @@ download_and_verify_zig_archive() {
   local expected_sha="$2"
   local output_path="$3"
 
-  curl -fsSL "$tarball_url" -o "$output_path"
+  curl \
+    --fail \
+    --show-error \
+    --silent \
+    --location \
+    --retry "${CURL_MAX_RETRIES:-5}" \
+    --retry-all-errors \
+    --retry-delay "${CURL_RETRY_DELAY_SEC:-2}" \
+    --connect-timeout "${CURL_CONNECT_TIMEOUT_SEC:-30}" \
+    --max-time "${CURL_MAX_TIME_SEC:-1800}" \
+    "$tarball_url" \
+    -o "$output_path"
 
   local actual_sha=""
   actual_sha="$(sha256sum "$output_path" | awk '{print $1}')"

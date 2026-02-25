@@ -268,6 +268,8 @@ build_llvm() {
     -DZLIB_ROOT="$ZLIB_PREFIX"
     -DZLIB_INCLUDE_DIR="$ZLIB_PREFIX/include"
     -DZLIB_LIBRARY="$ZLIB_PREFIX/lib/libz.a"
+    -DZLIB_LIBRARY_RELEASE="$ZLIB_PREFIX/lib/libz.a"
+    -DZLIB_LIBRARY_DEBUG="$ZLIB_PREFIX/lib/libz.a"
   )
 
   # Build compiler-rt runtimes needed by Zig tooling and payload packaging.
@@ -561,6 +563,7 @@ build_zig() {
     -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang"
     -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++"
     -DZIG_STATIC_LLVM=ON
+    -DZIG_STATIC_ZLIB=ON
     -DZIG_EXTRA_BUILD_ARGS=-Duse-zig-libcxx
     -DZIG_VERSION="$ZIG_REF"
   )
@@ -602,6 +605,7 @@ build_mold() {
     -DCMAKE_C_COMPILER="$BOOTSTRAP_CC"
     -DCMAKE_CXX_COMPILER="$BOOTSTRAP_CXX"
     -DBUILD_TESTING=OFF
+    -DMOLD_MOSTLY_STATIC=ON
     -DCMAKE_INSTALL_PREFIX="$MOLD_PREFIX"
   )
 
@@ -617,6 +621,42 @@ build_mold() {
   [[ -n "$mold_bin_candidate" && -x "$mold_bin_candidate" ]] || die "failed to locate built mold binary"
 
   cp -a "$mold_bin_candidate" "$MOLD_PREFIX/bin/mold"
+}
+
+# Ensure key toolchain binaries are not dynamically linked against libz.so.
+verify_static_zlib_linkage() {
+  local host_os=""
+  host_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  if [[ "$host_os" != "linux" ]]; then
+    log "skipping static zlib linkage verification on non-linux host: $host_os"
+    return 0
+  fi
+
+  require_cmd ldd
+
+  local -a bins=(
+    "$LLVM_PREFIX/bin/clang"
+    "$LLVM_PREFIX/bin/ld.lld"
+    "$LLVM_PREFIX/bin/llvm-config"
+    "$ZIG_PREFIX/bin/zig"
+  )
+
+  if [[ "$MOLD_PREFIX" != "-" ]]; then
+    bins+=("$MOLD_PREFIX/bin/mold")
+  fi
+
+  local bin=""
+  local ldd_output=""
+  for bin in "${bins[@]}"; do
+    [[ -x "$bin" ]] || die "missing binary for zlib linkage verification: $bin"
+
+    ldd_output="$(ldd "$bin" 2>/dev/null || true)"
+    if printf '%s\n' "$ldd_output" | grep -Eq 'libz\.so(\.|$)'; then
+      die "binary is dynamically linked against libz (expected static link): $bin"
+    fi
+  done
+
+  log "verified key binaries are not dynamically linked against libz.so"
 }
 
 # Produce output archives and payloads in dist/.
@@ -685,6 +725,7 @@ main() {
 
   configure_llvm_runtime_env
   build_zig
+  verify_static_zlib_linkage
 
   # Verify outputs and produce release artifacts.
   LLVM_VERSION="$(LD_LIBRARY_PATH="$(llvm_runtime_lib_path)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$LLVM_PREFIX/bin/llvm-config" --version)"

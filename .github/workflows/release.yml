@@ -38,6 +38,9 @@ jobs:
             clang \
             lld \
             build-essential \
+            gcc-aarch64-linux-gnu \
+            libc6-dev-arm64-cross \
+            binutils-aarch64-linux-gnu \
             pkg-config \
             zlib1g-dev
 

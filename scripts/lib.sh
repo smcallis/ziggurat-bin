@@ -30,6 +30,32 @@ require_cmds() {
   done
 }
 
+# Retry a command a fixed number of times with a constant delay.
+retry_cmd() {
+  local attempts="$1"
+  local delay_seconds="$2"
+  shift 2
+
+  [[ "$attempts" =~ ^[0-9]+$ && "$attempts" -gt 0 ]] || die "retry attempts must be a positive integer (got: $attempts)"
+  [[ "$delay_seconds" =~ ^[0-9]+$ ]] || die "retry delay must be a non-negative integer (got: $delay_seconds)"
+  [[ "$#" -gt 0 ]] || die "retry_cmd requires a command"
+
+  local attempt=1
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+
+    if (( attempt >= attempts )); then
+      return 1
+    fi
+
+    log "command failed (attempt $attempt/$attempts), retrying in ${delay_seconds}s"
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
+  done
+}
+
 # Extract "major.minor" from a semantic version string.
 major_minor() {
   local version="$1"
@@ -89,21 +115,27 @@ sync_repo_shallow() {
   local repo="$1"
   local ref="$2"
   local dir="$3"
+  local sync_attempts="${SYNC_REPO_MAX_ATTEMPTS:-3}"
+  local sync_retry_delay="${SYNC_REPO_RETRY_DELAY_SEC:-3}"
 
   if [[ ! -d "$dir/.git" ]]; then
     log "cloning $repo@$ref"
-    git clone --depth 1 --branch "$ref" "$repo" "$dir"
+    retry_cmd "$sync_attempts" "$sync_retry_delay" \
+      git clone --depth 1 --branch "$ref" "$repo" "$dir" \
+      || die "failed to clone $repo@$ref after $sync_attempts attempts"
     return 0
   fi
 
   log "refreshing $dir to $ref"
 
-  if git -C "$dir" fetch --depth 1 origin "refs/tags/$ref:refs/tags/$ref" >/dev/null 2>&1; then
+  if retry_cmd "$sync_attempts" "$sync_retry_delay" \
+    git -C "$dir" fetch --depth 1 origin "refs/tags/$ref:refs/tags/$ref" >/dev/null 2>&1; then
     git -C "$dir" checkout -f "tags/$ref" >/dev/null 2>&1
     return 0
   fi
 
-  if git -C "$dir" fetch --depth 1 origin "$ref" >/dev/null 2>&1; then
+  if retry_cmd "$sync_attempts" "$sync_retry_delay" \
+    git -C "$dir" fetch --depth 1 origin "$ref" >/dev/null 2>&1; then
     git -C "$dir" checkout -f FETCH_HEAD >/dev/null 2>&1
     return 0
   fi
