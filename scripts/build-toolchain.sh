@@ -46,6 +46,8 @@ ZIG_REF=""
 ZLIB_REPO=""
 ZLIB_REF=""
 
+PURGE_BOOTSTRAP_COMPILERS=""
+
 # Convert tool names to CMake option key format (e.g. llvm-ar -> LLVM_AR).
 canonical_tool_name() {
   local name="$1"
@@ -173,6 +175,94 @@ configure_bootstrap_compilers() {
   [[ -n "$BOOTSTRAP_CC" && -n "$BOOTSTRAP_CXX" ]] || die "unable to resolve bootstrap clang/clang++"
 
   log "using bootstrap compilers: CC=$BOOTSTRAP_CC CXX=$BOOTSTRAP_CXX"
+}
+
+# Run commands with root privileges when available (directly or via sudo).
+run_with_root() {
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    "$@"
+    return
+  fi
+
+  if command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+    return
+  fi
+
+  die "root or sudo is required for: $*"
+}
+
+# Decide whether bootstrap compiler packages should be purged after LLVM build.
+should_purge_bootstrap_compilers() {
+  local mode="${PURGE_BOOTSTRAP_COMPILERS:-auto}"
+  case "$mode" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    0|false|FALSE|no|NO|off|OFF)
+      return 1
+      ;;
+    auto|AUTO)
+      if [[ -n "${CI:-}" || -f /.dockerenv || -f /run/.containerenv ]]; then
+        return 0
+      fi
+      return 1
+      ;;
+    *)
+      die "invalid PURGE_BOOTSTRAP_COMPILERS value: $mode (expected auto/0/1)"
+      ;;
+  esac
+}
+
+# Remove distro compiler packages so later stages must use the just-built LLVM.
+purge_bootstrap_compilers() {
+  if ! should_purge_bootstrap_compilers; then
+    log "skipping bootstrap compiler purge (PURGE_BOOTSTRAP_COMPILERS=${PURGE_BOOTSTRAP_COMPILERS:-auto})"
+    return 0
+  fi
+
+  local host_os=""
+  host_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  if [[ "$host_os" != "linux" ]]; then
+    log "skipping bootstrap compiler purge on non-linux host: $host_os"
+    return 0
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    log "skipping bootstrap compiler purge: apt-get unavailable"
+    return 0
+  fi
+
+  require_cmd dpkg-query
+
+  local package_regex='^(clang|clang-[0-9]+|lld|lld-[0-9]+|gcc|g\+\+|gcc-[0-9]+|g\+\+-[0-9]+|gcc-aarch64-linux-gnu|g\+\+-aarch64-linux-gnu|binutils-aarch64-linux-gnu)$'
+  local -a purge_packages=()
+  mapfile -t purge_packages < <(
+    dpkg-query -W -f='${binary:Package}\n' \
+      | grep -E "$package_regex" \
+      | sort -u
+  )
+
+  if [[ "${#purge_packages[@]}" -eq 0 ]]; then
+    log "no bootstrap compiler packages found to purge"
+    return 0
+  fi
+
+  log "purging bootstrap compiler packages: ${purge_packages[*]}"
+  run_with_root env DEBIAN_FRONTEND=noninteractive apt-get purge -y "${purge_packages[@]}"
+
+  # Explicitly require the host compiler entrypoints to be absent now.
+  local -a blocked_bins=(
+    /usr/bin/clang
+    /usr/bin/clang++
+    /usr/bin/gcc
+    /usr/bin/g++
+  )
+
+  local bin=""
+  for bin in "${blocked_bins[@]}"; do
+    [[ ! -x "$bin" ]] || die "bootstrap compiler still present after purge: $bin"
+  done
 }
 
 # Build libc++, libc++abi, and libunwind first for a hermetic LLVM toolchain.
@@ -722,6 +812,7 @@ main() {
   build_bootstrap_runtimes
   build_bootstrap_zlib
   build_llvm
+  purge_bootstrap_compilers
   merge_bootstrap_runtimes_into_llvm_prefix
   merge_bootstrap_zlib_into_llvm_prefix
   sanitize_llvm_archives

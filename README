@@ -85,6 +85,12 @@ Edit `toolchain.env`:
 
 For automation, `scripts/ci-release.sh` overrides `LLVM_REF` and `ZIG_REF` from latest Zig metadata.
 
+Hermetic compiler purge behavior:
+
+- `PURGE_BOOTSTRAP_COMPILERS=auto` (default): in CI or containers, purge distro compiler packages after LLVM builds so Zig must use the freshly built LLVM toolchain.
+- `PURGE_BOOTSTRAP_COMPILERS=1`: always purge.
+- `PURGE_BOOTSTRAP_COMPILERS=0`: never purge.
+
 ## Local run
 
 ```bash
