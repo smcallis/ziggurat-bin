@@ -1,0 +1,177 @@
+name: Build Ziggurat Release
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            jq \
+            clang \
+            lld \
+            llvm \
+            cmake \
+            ninja-build \
+            curl \
+            xz-utils \
+            pixz
+
+      - name: Resolve Release Metadata
+        id: release_meta
+        run: |
+          set -euo pipefail
+          zig_version=""
+          zig_git_url="https://codeberg.org/ziglang/zig"
+
+          if [[ -f "config.env" ]]; then
+            # shellcheck source=/dev/null
+            source "config.env"
+          fi
+
+          if [[ -n "${ZIG_GIT_URL:-}" ]]; then
+            zig_git_url="${ZIG_GIT_URL}"
+          fi
+
+          if [[ -n "${ZIG_VERSION:-}" ]]; then
+            zig_version="${ZIG_VERSION#v}"
+          elif [[ -n "${ZIG_GIT_REF:-}" && "${ZIG_GIT_REF}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            zig_version="${ZIG_GIT_REF#v}"
+          else
+            zig_version="$(
+              git ls-remote --tags --refs "${zig_git_url}" |
+                awk '
+                  {
+                    tag=$2
+                    sub(/^refs\/tags\//, "", tag)
+                    normalized=tag
+                    sub(/^v/, "", normalized)
+                    if (normalized ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) {
+                      print normalized
+                    }
+                  }
+                ' |
+                LC_ALL=C sort -V |
+                tail -n 1
+            )"
+          fi
+
+          [[ -n "${zig_version}" ]] || {
+            echo "failed to resolve zig_version"
+            exit 1
+          }
+
+          echo "zig_version=${zig_version}" >>"${GITHUB_OUTPUT}"
+          echo "release_tag=v${zig_version}" >>"${GITHUB_OUTPUT}"
+          echo "asset_name=ziggurat-${zig_version}.tar.xz" >>"${GITHUB_OUTPUT}"
+
+      - name: Check Existing Release Artifact
+        id: release_check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release_meta.outputs.release_tag }}"
+          asset="${{ steps.release_meta.outputs.asset_name }}"
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            if gh release view "${tag}" --json assets --jq '.assets[].name' | grep -Fxq "${asset}"; then
+              echo "skip_build=true" >>"${GITHUB_OUTPUT}"
+              exit 0
+            fi
+          fi
+
+          echo "skip_build=false" >>"${GITHUB_OUTPUT}"
+
+      - name: Existing Release Artifact Found
+        if: steps.release_check.outputs.skip_build == 'true'
+        run: |
+          echo "Release asset already exists for ${{ steps.release_meta.outputs.release_tag }}:"
+          echo "${{ steps.release_meta.outputs.asset_name }}"
+          echo "Skipping build."
+
+      - name: Cache build directories
+        if: steps.release_check.outputs.skip_build != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            build
+            state
+            out
+          key: ${{ runner.os }}-ziggurat-${{ hashFiles('config.env', 'scripts/**', 'Dockerfile') }}
+          restore-keys: |
+            ${{ runner.os }}-ziggurat-
+
+      - name: Unit Tests
+        if: steps.release_check.outputs.skip_build != 'true'
+        run: bash tests/run.sh
+
+      - name: Build and Package Archive
+        if: steps.release_check.outputs.skip_build != 'true'
+        run: bash scripts/build.sh --from-stage 00_prepare_dirs --to-stage 99_package
+
+      - name: Verify Archive Exists
+        if: steps.release_check.outputs.skip_build != 'true'
+        run: |
+          ls -l out
+          archive_path="out/${{ steps.release_meta.outputs.asset_name }}"
+          if [[ ! -f "${archive_path}" ]]; then
+            echo "expected ${archive_path}"
+            exit 1
+          fi
+
+      - name: Validate Dist Metadata Schema
+        if: steps.release_check.outputs.skip_build != 'true'
+        run: |
+          jq -e '
+            type == "object" and
+            (.target_triples | type == "array") and
+            (.tool_binaries | type == "array") and
+            (.include_roots | type == "array") and
+            (.library_roots | type == "array") and
+            (.runtime_libraries | type == "array") and
+            (.sanitizer_libraries | type == "array")
+          ' dist/TOOLCHAIN_METADATA.json >/dev/null
+
+      - name: Ensure Release Exists
+        if: steps.release_check.outputs.skip_build != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release_meta.outputs.release_tag }}"
+          if ! gh release view "${tag}" >/dev/null 2>&1; then
+            gh release create "${tag}" \
+              --target "${GITHUB_SHA}" \
+              --title "${tag}" \
+              --notes "Automated daily build for Zig ${{ steps.release_meta.outputs.zig_version }}."
+          fi
+
+      - name: Upload Release Asset
+        if: steps.release_check.outputs.skip_build != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload \
+            "${{ steps.release_meta.outputs.release_tag }}" \
+            "out/${{ steps.release_meta.outputs.asset_name }}" \
+            --clobber
+
+      - name: Upload archive artifact
+        if: steps.release_check.outputs.skip_build != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ziggurat-archive
+          path: out/${{ steps.release_meta.outputs.asset_name }}
+          if-no-files-found: error
