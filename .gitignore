@@ -1,0 +1,8 @@
+build/
+out/
+*.tar.xz
+*.tar
+*.log
+.DS_Store
+state/*
+!state/.gitkeep
