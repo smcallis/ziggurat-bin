@@ -11,7 +11,8 @@ source "${PROJECT_ROOT}/scripts/lib/common.sh"
 zig_bin="${TARGET_DIR}/bin/zig"
 zig_lib_dir="${TARGET_DIR}/lib"
 cache_dir="${STATE_DIR}/zig-cache"
-wrapper_out="${STATE_DIR}/zig-wrapper-smoke"
+zig_src="${STATE_DIR}/zig-smoke.zig"
+zig_out="${STATE_DIR}/zig-smoke"
 cpp_src="${STATE_DIR}/hello.cc"
 cpp_out="${STATE_DIR}/hello"
 
@@ -19,6 +20,14 @@ cpp_out="${STATE_DIR}/hello"
 [[ -d "${zig_lib_dir}" ]] || die "Missing zig lib dir in payload: ${zig_lib_dir}"
 
 mkdir -p "${STATE_DIR}" "${cache_dir}"
+
+cat >"${zig_src}" <<'EOF'
+const std = @import("std");
+
+pub fn main() void {
+	std.debug.assert(std.mem.eql(u8, "ziggurat", "ziggurat"));
+}
+EOF
 
 cat >"${cpp_src}" <<'EOF'
 #include <vector>
@@ -36,10 +45,10 @@ env \
 	"${zig_bin}" build-exe \
 	-fstrip \
 	-OReleaseSafe \
-	-femit-bin="${wrapper_out}" \
-	"${PROJECT_ROOT}/toolchain/lib/zig-wrapper.zig"
+	-femit-bin="${zig_out}" \
+	"${zig_src}"
 
-[[ -x "${wrapper_out}" ]] || die "zig-wrapper compile validation did not produce ${wrapper_out}"
+[[ -x "${zig_out}" ]] || die "zig smoke compile validation did not produce ${zig_out}"
 
 env \
 	ZIG_LIB_DIR="${zig_lib_dir}" \

@@ -10,11 +10,6 @@ STATE_DIR="${TMP_DIR}/state"
 TARGET_DIR="${TMP_DIR}/dist"
 FINAL_DIR="${BUILD_DIR}/final-toolchain"
 
-if ! command -v jq >/dev/null 2>&1; then
-	echo "jq not installed; skipping metadata schema test"
-	exit 0
-fi
-
 mkdir -p \
 	"${FINAL_DIR}/zig/bin" \
 	"${FINAL_DIR}/llvm/bin" \
@@ -46,12 +41,7 @@ BUILD_ROOT="${BUILD_DIR}" \
 	--state-dir "${STATE_DIR}" \
 	--target-dir "${TARGET_DIR}"
 
-jq -e '
-	type == "object" and
-	(.target_triples | type == "array") and
-	(.tool_binaries | type == "array") and
-	(.include_roots | type == "array") and
-	(.library_roots | type == "array") and
-	(.runtime_libraries | type == "array") and
-	(.sanitizer_libraries | type == "array")
-' "${TARGET_DIR}/TOOLCHAIN_METADATA.json" >/dev/null
+if [[ -e "${TARGET_DIR}/TOOLCHAIN_METADATA.json" ]]; then
+	echo "did not expect TOOLCHAIN_METADATA.json in dist payload"
+	exit 1
+fi

@@ -15,9 +15,11 @@ printf '%s\n' '#!/usr/bin/env bash' 'echo zig' >"${TARGET_DIR}/bin/zig"
 chmod +x "${TARGET_DIR}/bin/zig"
 printf 'fake-lib\n' >"${TARGET_DIR}/lib/libc++.a"
 printf 'header\n' >"${TARGET_DIR}/include/vector"
+printf 'build\n' >"${TARGET_DIR}/BUILD.bazel"
 printf 'manifest\n' >"${TARGET_DIR}/MANIFEST.txt"
 printf 'version\n' >"${TARGET_DIR}/VERSION.txt"
-printf '{"meta":true}\n' >"${TARGET_DIR}/TOOLCHAIN_METADATA.json"
+mkdir -p "${TARGET_DIR}/lib/clang/20"
+ln -s 20 "${TARGET_DIR}/lib/clang/current"
 
 ZIG_VERSION="testpkg" \
 	OUT_DIR="${OUT_DIR}" \
@@ -60,12 +62,28 @@ archive_root="${UNPACK_DIR}/ziggurat-vtestpkg"
 for required in \
 	"${archive_root}/bin/zig" \
 	"${archive_root}/lib/libc++.a" \
+	"${archive_root}/BUILD.bazel" \
 	"${archive_root}/include/vector" \
 	"${archive_root}/MANIFEST.txt" \
-	"${archive_root}/VERSION.txt" \
-	"${archive_root}/TOOLCHAIN_METADATA.json"; do
+	"${archive_root}/VERSION.txt"; do
 	if [[ ! -f "${required}" ]]; then
 		echo "missing unpacked payload file: ${required}"
 		exit 1
 	fi
 done
+
+if [[ ! -L "${archive_root}/lib/clang/current" ]]; then
+	echo "expected packaged lib/clang/current symlink"
+	exit 1
+fi
+
+if [[ "$(readlink "${archive_root}/lib/clang/current")" != "20" ]]; then
+	echo "expected packaged lib/clang/current symlink target to be 20"
+	ls -l "${archive_root}/lib/clang"
+	exit 1
+fi
+
+if [[ -e "${archive_root}/TOOLCHAIN_METADATA.json" ]]; then
+	echo "did not expect TOOLCHAIN_METADATA.json in packaged payload"
+	exit 1
+fi

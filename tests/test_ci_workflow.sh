@@ -12,6 +12,9 @@ WORKFLOW_FILE="${ROOT_DIR}/.github/workflows/build-toolchain.yml"
 required_patterns=(
 	"schedule:"
 	"cron: \"0 6 * * *\""
+	"concurrency:"
+	"group: build-ziggurat-release-\${{ github.ref }}"
+	"cancel-in-progress: false"
 	"permissions:"
 	"contents: write"
 	"Install Build Dependencies"
@@ -34,8 +37,6 @@ required_patterns=(
 	"Build and Package Archive"
 	"--to-stage 99_package"
 	"out/\${{ steps.release_meta.outputs.asset_name }}"
-	"Validate Dist Metadata Schema"
-	"dist/TOOLCHAIN_METADATA.json"
 	"Ensure Release Exists"
 	"gh release create"
 	"Upload Release Asset"
@@ -47,6 +48,15 @@ required_patterns=(
 for pattern in "${required_patterns[@]}"; do
 	if ! grep -Fq -- "${pattern}" "${WORKFLOW_FILE}"; then
 		echo "workflow missing expected pattern: ${pattern}"
+		exit 1
+	fi
+done
+
+for forbidden_pattern in \
+	"Validate Dist Metadata Schema" \
+	"dist/TOOLCHAIN_METADATA.json"; do
+	if grep -Fq -- "${forbidden_pattern}" "${WORKFLOW_FILE}"; then
+		echo "workflow should not reference removed metadata: ${forbidden_pattern}"
 		exit 1
 	fi
 done

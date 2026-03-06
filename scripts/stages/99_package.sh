@@ -40,18 +40,18 @@ tar_payload_paths=(
 	bin
 	lib
 	include
+	BUILD.bazel
 	MANIFEST.txt
 	VERSION.txt
-	TOOLCHAIN_METADATA.json
 )
 
 if command -v pixz >/dev/null 2>&1; then
 	tar "${tar_common_args[@]}" \
-		--transform="s,^,${archive_root}/," \
+		--transform="flags=r;s,^,${archive_root}/," \
 		-cf - "${tar_payload_paths[@]}" | pixz -9 >"${xz_path}"
 else
 	tar "${tar_common_args[@]}" \
-		--transform="s,^,${archive_root}/," \
+		--transform="flags=r;s,^,${archive_root}/," \
 		-cf "${tar_path}" "${tar_payload_paths[@]}"
 	xz -f -T0 -9e "${tar_path}"
 fi

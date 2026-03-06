@@ -7,6 +7,7 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 
 STATE_DIR="${TMP_DIR}/state"
 TARGET_DIR="${TMP_DIR}/dist"
+ZIG_SMOKE_SRC="${STATE_DIR}/zig-smoke.zig"
 
 mkdir -p "${TARGET_DIR}/bin" "${TARGET_DIR}/lib/std/crypto/pcurves/tests"
 
@@ -64,12 +65,30 @@ chmod +x "${TARGET_DIR}/bin/zig"
 
 printf 'test source\n' >"${TARGET_DIR}/lib/std/crypto/pcurves/tests/p256.zig"
 
-STATE_DIR="${STATE_DIR}" \
+env \
+	STATE_DIR="${STATE_DIR}" \
 	bash "${ROOT_DIR}/scripts/build.sh" \
 	--from-stage 98_validate_payload \
 	--to-stage 98_validate_payload \
 	--state-dir "${STATE_DIR}" \
 	--target-dir "${TARGET_DIR}"
+
+if [[ ! -f "${ZIG_SMOKE_SRC}" ]]; then
+	echo "expected standalone zig smoke source"
+	exit 1
+fi
+
+if ! grep -Fq "${ZIG_SMOKE_SRC}" "${STATE_DIR}/zig-invocations.log"; then
+	echo "expected wrapper compile validation to use standalone zig smoke source"
+	cat "${STATE_DIR}/zig-invocations.log"
+	exit 1
+fi
+
+if grep -Fq "toolchain/lib/zig-wrapper.zig" "${STATE_DIR}/zig-invocations.log"; then
+	echo "stage should not depend on toolchain repo files"
+	cat "${STATE_DIR}/zig-invocations.log"
+	exit 1
+fi
 
 if ! grep -Fq "build-exe" "${STATE_DIR}/zig-invocations.log"; then
 	echo "expected wrapper compile validation to invoke zig build-exe"

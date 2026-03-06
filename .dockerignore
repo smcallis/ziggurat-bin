@@ -1,3 +1,10 @@
-*
-!Dockerfile
-!.dockerignore
+.git
+build
+dist
+out
+state
+third_party
+reference.tar.xz
+ziggurat-*.tar.xz
+zig-*.tar.xz
+*.log

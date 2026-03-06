@@ -22,16 +22,18 @@ printf '%s\n' '#!/usr/bin/env bash' 'echo zig 0.99.0-test' >"${ZIG_SRC}/zig"
 chmod +x "${ZIG_SRC}/zig"
 mkdir -p "${ZIG_SRC}/lib"
 printf '%s\n' 'placeholder' >"${ZIG_SRC}/lib/placeholder.txt"
+mkdir -p "${ZIG_SRC}/lib/std/crypto/pcurves/tests"
+printf '%s\n' 'p256 source' >"${ZIG_SRC}/lib/std/crypto/pcurves/tests/p256.zig"
+printf '%s\n' 'p384 source' >"${ZIG_SRC}/lib/std/crypto/pcurves/tests/p384.zig"
+printf '%s\n' 'secp256k1 source' >"${ZIG_SRC}/lib/std/crypto/pcurves/tests/secp256k1.zig"
 
 cat >"${BIN_DIR}/fake-zig-build" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 mkdir -p "${ZIG_INSTALL_DIR}"
-cp -a "${ZIG_SOURCE_DIR}/." "${ZIG_INSTALL_DIR}/"
-if [[ -x "${ZIG_INSTALL_DIR}/zig" && ! -x "${ZIG_INSTALL_DIR}/bin/zig" ]]; then
-	mkdir -p "${ZIG_INSTALL_DIR}/bin"
-	mv "${ZIG_INSTALL_DIR}/zig" "${ZIG_INSTALL_DIR}/bin/zig"
-fi
+mkdir -p "${ZIG_INSTALL_DIR}/bin" "${ZIG_INSTALL_DIR}/lib"
+cp -a "${ZIG_SOURCE_DIR}/zig" "${ZIG_INSTALL_DIR}/bin/zig"
+cp -a "${ZIG_SOURCE_DIR}/lib/placeholder.txt" "${ZIG_INSTALL_DIR}/lib/placeholder.txt"
 EOF
 chmod +x "${BIN_DIR}/fake-zig-build"
 
@@ -53,6 +55,16 @@ if [[ ! -f "${BUILD_DIR}/final-toolchain/zig/lib/placeholder.txt" ]]; then
 	echo "expected Zig runtime files to be copied"
 	exit 1
 fi
+
+for required_path in \
+	"${BUILD_DIR}/final-toolchain/zig/lib/std/crypto/pcurves/tests/p256.zig" \
+	"${BUILD_DIR}/final-toolchain/zig/lib/std/crypto/pcurves/tests/p384.zig" \
+	"${BUILD_DIR}/final-toolchain/zig/lib/std/crypto/pcurves/tests/secp256k1.zig"; do
+	if [[ ! -f "${required_path}" ]]; then
+		echo "expected Zig source file to be preserved in installed lib tree: ${required_path}"
+		exit 1
+	fi
+done
 
 if [[ ! -f "${STATE_DIR}/zig-build.json" ]]; then
 	echo "expected zig stage metadata file"

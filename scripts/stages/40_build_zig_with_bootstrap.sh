@@ -57,5 +57,12 @@ zig_mode="custom-builder"
 
 [[ -x "${zig_install_dir}/bin/zig" ]] || die "Missing zig binary after stage: ${zig_install_dir}/bin/zig"
 
+# Preserve the full Zig library source tree in the final install so downstream
+# consumers can compile helper wrappers against the bundled stdlib.
+if [[ -d "${zig_source}/lib" ]]; then
+	mkdir -p "${zig_install_dir}/lib"
+	cp -a "${zig_source}/lib/." "${zig_install_dir}/lib/"
+fi
+
 printf '{"source":"%s","install_dir":"%s","mode":"%s"}\n' \
 	"${zig_source}" "${zig_install_dir}" "${zig_mode}" >"${STATE_DIR}/zig-build.json"

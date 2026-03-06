@@ -53,6 +53,16 @@ if [[ ! -x "${guard_script}" ]]; then
 	exit 1
 fi
 
+if grep -Fq 'check_tool gcc' "${guard_script}"; then
+	echo "did not expect guard script to check gcc"
+	exit 1
+fi
+
+if grep -Fq 'check_tool g++' "${guard_script}"; then
+	echo "did not expect guard script to check g++"
+	exit 1
+fi
+
 if ! grep -Fq "export CC=${BOOTSTRAP_BIN}/clang" "${env_file}"; then
 	echo "expected CC export in env file"
 	cat "${env_file}"

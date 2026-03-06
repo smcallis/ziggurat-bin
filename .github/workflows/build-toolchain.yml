@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: "0 6 * * *"
 
+concurrency:
+  group: build-ziggurat-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -137,19 +141,6 @@ jobs:
             echo "expected ${checksum_path}"
             exit 1
           fi
-
-      - name: Validate Dist Metadata Schema
-        if: steps.release_check.outputs.skip_build != 'true'
-        run: |
-          jq -e '
-            type == "object" and
-            (.target_triples | type == "array") and
-            (.tool_binaries | type == "array") and
-            (.include_roots | type == "array") and
-            (.library_roots | type == "array") and
-            (.runtime_libraries | type == "array") and
-            (.sanitizer_libraries | type == "array")
-          ' dist/TOOLCHAIN_METADATA.json >/dev/null
 
       - name: Ensure Release Exists
         if: steps.release_check.outputs.skip_build != 'true'

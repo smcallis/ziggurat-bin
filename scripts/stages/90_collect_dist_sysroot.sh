@@ -17,6 +17,28 @@ final_root="${build_root}/final-toolchain"
 
 [[ -d "${final_root}" ]] || die "Final toolchain directory not found: ${final_root}"
 
+## Create lib/clang/current -> lib/clang/<version> when a versioned clang dir exists.
+ensure_clang_current_symlink() {
+	local clang_root="${TARGET_DIR}/lib/clang"
+	local clang_version_dir
+
+	[[ -d "${clang_root}" ]] || return 0
+	clang_version_dir="$(find "${clang_root}" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1 || true)"
+	[[ -n "${clang_version_dir}" ]] || return 0
+
+	ln -sfn "$(basename "${clang_version_dir}")" "${clang_root}/current"
+}
+
+## Copy the checked-in payload BUILD.bazel into the assembled dist tree.
+install_payload_build_file() {
+	cp "${PROJECT_ROOT}/payload/BUILD.bazel" "${TARGET_DIR}/BUILD.bazel"
+}
+
+## Copy files while preserving layout and mode without preserving ownership.
+copy_payload_path() {
+	cp -a --no-preserve=ownership "$@"
+}
+
 ## Return acceptable binary names for a requested tool key.
 tool_candidates() {
 	local tool_name="$1"
@@ -51,7 +73,7 @@ copy_if_exists() {
 	local src="$1"
 	local dst="$2"
 	if [[ -e "${src}" ]]; then
-		cp -a "${src}" "${dst}"
+		copy_payload_path "${src}" "${dst}"
 	fi
 }
 
@@ -80,6 +102,27 @@ import_aarch64_runtime_from_reference() {
 		tar -xJf "${reference_archive}" -C "${target_lib_dir}" \
 			--strip-components=2 "${rel_path}"
 	fi
+}
+
+## Resolve a host or toolchain binary used while assembling the payload.
+find_stage_tool() {
+	local tool_name="$1"
+	local fallback_name="$2"
+	local tool_path
+
+	tool_path="$(find_tool_source "${tool_name}" || true)"
+	if [[ -n "${tool_path}" ]]; then
+		echo "${tool_path}"
+		return 0
+	fi
+
+	tool_path="$(command -v "${tool_name}" || true)"
+	if [[ -n "${tool_path}" ]]; then
+		echo "${tool_path}"
+		return 0
+	fi
+
+	command -v "${fallback_name}"
 }
 
 ## Reset dist tree layout to bin/lib/include roots.
@@ -124,12 +167,12 @@ copy_spec_tools() {
 		if [[ "${tool}" == "llvm-lld" ]]; then
 			tool_base="$(basename "${tool_src}")"
 			if [[ "${tool_base}" == "llvm-lld" ]]; then
-				cp -a "${tool_src}" "${TARGET_DIR}/bin/"
+				copy_payload_path "${tool_src}" "${TARGET_DIR}/bin/"
 			else
-				cp -a "${tool_src}" "${TARGET_DIR}/bin/llvm-lld"
+				copy_payload_path "${tool_src}" "${TARGET_DIR}/bin/llvm-lld"
 			fi
 		else
-			cp -a "${tool_src}" "${TARGET_DIR}/bin/"
+			copy_payload_path "${tool_src}" "${TARGET_DIR}/bin/"
 		fi
 	done
 }
@@ -141,10 +184,10 @@ copy_runtime_payload() {
 	local lib_path
 
 	if [[ -d "${final_root}/zig/lib/zig" ]]; then
-		cp -a "${final_root}/zig/lib/zig/." "${TARGET_DIR}/lib/"
+		copy_payload_path "${final_root}/zig/lib/zig/." "${TARGET_DIR}/lib/"
 	fi
 	if [[ -d "${final_root}/mold/lib" ]]; then
-		cp -a "${final_root}/mold/lib/." "${TARGET_DIR}/lib/"
+		copy_payload_path "${final_root}/mold/lib/." "${TARGET_DIR}/lib/"
 	fi
 
 	if [[ -d "${llvm_lib_dir}" ]]; then
@@ -153,7 +196,7 @@ copy_runtime_payload() {
 			"${llvm_lib_dir}/x86_64-unknown-linux-gnu" \
 			"${llvm_lib_dir}/aarch64-unknown-linux-gnu"; do
 			if [[ -d "${runtime_dir}" ]]; then
-				cp -a "${runtime_dir}" "${TARGET_DIR}/lib/"
+				copy_payload_path "${runtime_dir}" "${TARGET_DIR}/lib/"
 			fi
 		done
 		while IFS= read -r lib_path; do
@@ -168,6 +211,51 @@ copy_runtime_payload() {
 			\))
 	fi
 	import_aarch64_runtime_from_reference "${TARGET_DIR}/lib"
+}
+
+## Strip libFuzzer archive metadata that lld cannot resolve through zig cc.
+patch_fuzzer_runtime_archive() {
+	local archive_path="$1"
+	local tmpdir
+	local obj
+	local objcopy_bin
+	local ar_bin
+	local ranlib_bin
+
+	[[ -f "${archive_path}" ]] || return 0
+
+	objcopy_bin="$(find_stage_tool llvm-objcopy objcopy)"
+	ar_bin="$(find_stage_tool llvm-ar ar)"
+	ranlib_bin="$(find_stage_tool llvm-ranlib ranlib)"
+
+	tmpdir="$(mktemp -d)"
+	cp "${archive_path}" "${tmpdir}/libclang_rt.fuzzer.a"
+
+	(
+		cd "${tmpdir}"
+		"${ar_bin}" x libclang_rt.fuzzer.a
+		shopt -s nullglob
+		for obj in *.o; do
+			"${objcopy_bin}" \
+				--remove-section=.deplibs \
+				--remove-section=.linker-options \
+				"${obj}"
+		done
+		rm -f libclang_rt.fuzzer.a
+		"${ar_bin}" qc libclang_rt.fuzzer.a ./*.o
+		"${ranlib_bin}" libclang_rt.fuzzer.a
+	)
+
+	cp "${tmpdir}/libclang_rt.fuzzer.a" "${archive_path}"
+	rm -rf "${tmpdir}"
+}
+
+## Make libFuzzer runtime archives link cleanly from the assembled payload.
+patch_fuzzer_runtime_archives() {
+	local archive_path
+	while IFS= read -r archive_path; do
+		patch_fuzzer_runtime_archive "${archive_path}"
+	done < <(find "${TARGET_DIR}/lib/clang" -type f -name 'libclang_rt.fuzzer.a' | sort)
 }
 
 ## Copy runtime/public headers required by the payload.
@@ -188,7 +276,7 @@ copy_runtime_headers() {
 		done
 	fi
 	if [[ -d "${final_root}/zig/include" ]]; then
-		cp -a "${final_root}/zig/include/." "${TARGET_DIR}/include/"
+		copy_payload_path "${final_root}/zig/include/." "${TARGET_DIR}/include/"
 	fi
 }
 
@@ -200,7 +288,10 @@ load_feature_config
 mapfile -t spec_tools < <(resolve_spec_tools)
 copy_spec_tools "${spec_tools[@]}"
 copy_runtime_payload
+patch_fuzzer_runtime_archives
 copy_runtime_headers
+ensure_clang_current_symlink
+install_payload_build_file
 
 # Metadata inputs: load configured versions and source lock SHAs.
 source_config_with_env_overrides \
@@ -247,28 +338,5 @@ llvm_source_sha=${llvm_sha}
 iwyu_source_sha=${iwyu_sha}
 EOF
 
-# Manifest and structured metadata for downstream consumers.
+# Manifest for downstream inspection.
 generate_manifest "${TARGET_DIR}" "${TARGET_DIR}/MANIFEST.txt"
-
-tool_binaries_lines="$(find "${TARGET_DIR}/bin" -maxdepth 1 \( -type f -o -type l \) -printf '%f\n' | LC_ALL=C sort)"
-runtime_lib_lines="$(find "${TARGET_DIR}/lib" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
-sanitizer_lib_lines="$(find "${TARGET_DIR}/lib" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | grep -E 'asan|tsan|msan|ubsan|lsan|rtsan' || true)"
-
-include_roots_lines=""
-library_roots_lines=""
-if find "${TARGET_DIR}/include" -mindepth 1 -print -quit | grep -q .; then
-	include_roots_lines="include"
-fi
-if find "${TARGET_DIR}/lib" -mindepth 1 -print -quit | grep -q .; then
-	library_roots_lines="lib"
-fi
-
-tool_binaries_json="$(json_array_from_lines "${tool_binaries_lines}")"
-include_roots_json="$(json_array_from_lines "${include_roots_lines}")"
-library_roots_json="$(json_array_from_lines "${library_roots_lines}")"
-runtime_libs_json="$(json_array_from_lines "${runtime_lib_lines}")"
-sanitizer_libs_json="$(json_array_from_lines "${sanitizer_lib_lines}")"
-
-cat >"${TARGET_DIR}/TOOLCHAIN_METADATA.json" <<EOF
-{"target_triples":[],"tool_binaries":${tool_binaries_json},"include_roots":${include_roots_json},"library_roots":${library_roots_json},"runtime_libraries":${runtime_libs_json},"sanitizer_libraries":${sanitizer_libs_json}}
-EOF

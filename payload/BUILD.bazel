@@ -1,0 +1,183 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(
+    ["**"],
+    exclude = [
+        "BUILD.bazel",
+        "WORKSPACE.bazel",
+        "MODULE.bazel",
+    ],
+))
+
+filegroup(
+    name = "all_files",
+    srcs = glob(
+        ["**"],
+        exclude = [
+            "BUILD.bazel",
+            "WORKSPACE.bazel",
+            "MODULE.bazel",
+        ],
+    ),
+)
+
+filegroup(
+    name = "bin",
+    srcs = glob(["bin/**"]),
+)
+
+filegroup(
+    name = "lib",
+    srcs = glob(["lib/**"]),
+)
+
+filegroup(
+    name = "include",
+    srcs = glob(
+        ["include/**"],
+        allow_empty = True,
+    ),
+)
+
+filegroup(
+    name = "clang_builtin_headers",
+    srcs = glob(
+        ["lib/clang/current/include/**"],
+        allow_empty = True,
+    ),
+)
+
+filegroup(
+    name = "clangrt_fuzzer_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.fuzzer.a"],
+)
+
+filegroup(
+    name = "clangrt_fuzzer_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.fuzzer.a"],
+)
+
+filegroup(
+    name = "clangrt_asan_preinit_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.asan-preinit.a"],
+)
+
+filegroup(
+    name = "clangrt_asan_preinit_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.asan-preinit.a"],
+)
+
+filegroup(
+    name = "clangrt_asan_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.asan.a"],
+)
+
+filegroup(
+    name = "clangrt_asan_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.asan.a"],
+)
+
+filegroup(
+    name = "clangrt_asan_cxx_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.asan_cxx.a"],
+)
+
+filegroup(
+    name = "clangrt_asan_cxx_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.asan_cxx.a"],
+)
+
+filegroup(
+    name = "clangrt_tsan_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.tsan.a"],
+)
+
+filegroup(
+    name = "clangrt_tsan_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.tsan.a"],
+)
+
+filegroup(
+    name = "clangrt_tsan_cxx_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.tsan_cxx.a"],
+)
+
+filegroup(
+    name = "clangrt_tsan_cxx_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.tsan_cxx.a"],
+)
+
+filegroup(
+    name = "clangrt_msan_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.msan.a"],
+)
+
+filegroup(
+    name = "clangrt_msan_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.msan.a"],
+)
+
+filegroup(
+    name = "clangrt_msan_cxx_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.msan_cxx.a"],
+)
+
+filegroup(
+    name = "clangrt_msan_cxx_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.msan_cxx.a"],
+)
+
+filegroup(
+    name = "clangrt_ubsan_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.ubsan_standalone.a"],
+)
+
+filegroup(
+    name = "clangrt_ubsan_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.ubsan_standalone.a"],
+)
+
+filegroup(
+    name = "clangrt_ubsan_cxx_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.ubsan_standalone_cxx.a"],
+)
+
+filegroup(
+    name = "clangrt_ubsan_cxx_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.ubsan_standalone_cxx.a"],
+)
+
+filegroup(
+    name = "clangrt_lsan_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.lsan.a"],
+)
+
+filegroup(
+    name = "clangrt_lsan_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.lsan.a"],
+)
+
+filegroup(
+    name = "clangrt_rtsan_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.rtsan.a"],
+)
+
+filegroup(
+    name = "clangrt_rtsan_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.rtsan.a"],
+)
+
+filegroup(
+    name = "clangrt_profile_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.profile.a"],
+)
+
+filegroup(
+    name = "clangrt_profile_aarch64",
+    srcs = ["lib/clang/current/lib/aarch64-unknown-linux-gnu/libclang_rt.profile.a"],
+)
+
+filegroup(
+    name = "clangrt_nsan_x86_64",
+    srcs = ["lib/clang/current/lib/x86_64-unknown-linux-gnu/libclang_rt.nsan.a"],
+)

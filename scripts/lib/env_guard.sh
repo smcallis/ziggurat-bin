@@ -26,8 +26,6 @@ check_tool() {
 
 check_tool clang
 check_tool clang++
-check_tool gcc
-check_tool g++
 
 clang_resolved="\$(command -v clang || true)"
 if [[ -n "\${clang_resolved}" && "\${clang_resolved}" != "\${bootstrap_bin}/clang" ]]; then
