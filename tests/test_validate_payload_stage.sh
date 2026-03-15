@@ -84,7 +84,7 @@ if ! grep -Fq "${ZIG_SMOKE_SRC}" "${STATE_DIR}/zig-invocations.log"; then
 	exit 1
 fi
 
-if grep -Fq "toolchain/lib/zig-wrapper.zig" "${STATE_DIR}/zig-invocations.log"; then
+if grep -Fq "toolchain/lib/sdk/wrapper.sh" "${STATE_DIR}/zig-invocations.log"; then
 	echo "stage should not depend on toolchain repo files"
 	cat "${STATE_DIR}/zig-invocations.log"
 	exit 1
